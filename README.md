@@ -27,7 +27,7 @@ NWP models:
     * NWP1, NWP2, NWP3: 100m height
     * NWP4: 10m height
     
-Variable | Prediction description | NWP 1 | NWP 2 | NWP 3 | NWP 4 
+NWP Variable | Prediction description | NWP 1 | NWP 2 | NWP 3 | NWP 4 
 ------ | --- | --- | --- | --- | ---
 Wind speed U,V (m/s) | 10min average [H-10min,H] | x (100m) | x (100m) | x (100m) | x (10m)
 Temperature of air T (m/s) | 1hour average [H-1,H] | x |  | x | 
