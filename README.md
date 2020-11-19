@@ -3,7 +3,7 @@ by Compagnie Nationale du Rhône
 
 https://challengedata.ens.fr/challenges/34
 
-**[on going work]**
+**[ongoing work]**
 
 --> Time-series prediction with 1h time step.
 
