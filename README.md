@@ -23,12 +23,7 @@ Test set:
 Complementary observed data (shouldn't be used directly in the model):
 * hourly wind speeds and wind directions observed at the height of each wind turbine
 
-NWP models:
-* Hours:
-* U & V components of the wind : 
-    * NWP1, NWP2, NWP3: 100m height
-    * NWP4: 10m height
-    
+NWP models:    
 NWP Variable | Prediction description | NWP 1 | NWP 2 | NWP 3 | NWP 4 
 ------ | --- | --- | --- | --- | ---
 Wind speed U,V (m/s) | 10min average [H-10min,H] | x (100m) | x (100m) | x (100m) | x (10m)
