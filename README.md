@@ -3,6 +3,8 @@ by Compagnie Nationale du Rhône
 
 https://challengedata.ens.fr/challenges/34
 
+**[on going work]**
+
 --> Time-series prediction with 1h time step.
 
 Train set:
@@ -37,3 +39,10 @@ Tips:
 * Train 1 model per WF
 * derive wind speed (and wind direction) from U and V
 * reconstruct NWP time series
+
+Steps: 
+* Make sequences from data
+* Make a model
+* Train it with the sequences
+* Cross-validation
+* Try several models
