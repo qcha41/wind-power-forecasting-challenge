@@ -40,7 +40,7 @@ Tips:
 
 # My approach
 **[ongoing work]**
-* Make sequences from data
+* Make a train set of sequences based on a "best weather prediction" matrix.
 
 ![ ](/schemes/sequence_structure.jpg)
 
