@@ -1,4 +1,4 @@
-# Data Challenge: Wind Power forecasting for the day-ahead energy market
+# ENS Data Challenge: Wind Power forecasting for the day-ahead energy market
 by Compagnie Nationale du Rhône
 ![ ](https://cap.img.pmdstatic.net/fit/http.3A.2F.2Fprd2-bone-image.2Es3-website-eu-west-1.2Eamazonaws.2Ecom.2Fcap.2F2019.2F10.2F04.2Fea495374-9115-4be7-a91a-e9bc5b305b0b.2Ejpeg/768x432/background-color/ffffff/focus-point/992%2C1086/quality/70/dangereuses-pour-la-sante-peu-ecolo-faut-il-en-finir-avec-les-eoliennes-1352031.jpg
 )
