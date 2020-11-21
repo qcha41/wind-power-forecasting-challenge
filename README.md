@@ -42,11 +42,25 @@ Tips:
 
 # My approach
 **[ongoing work]**
-* Make a train set of sequences based on a "best weather prediction" matrix.
+
+## Make a weather forecast matrix
+
+In the datasets, each line gives the different weather predictions for a given target datetime. These predictions are multiple: several predictions models are used to predict several weather variables, and these models are run at different each days. 
+In other words, for each triplet (prediction model, weather variable, target datetime), we have several predictions made at different time. 
+It is then interesting to calculate the "best" prediction value for each triplet, using the fact that recent predictions should be more predominant in the calculation than the older ones.
+
+To do that, I have implemented a weighted mean of the prediction values. We then have : 
+
+<img src="https://render.githubusercontent.com/render/math?math=\dfrac{\sum_{k=1}^{n}\alpha^{\Delta H_k}\,V_k}{\sum_{k=1}^{n}\alpha^{\Delta H_k}}"/>
+
+where <img src="https://render.githubusercontent.com/render/math?math=V_k"/> is the k-th prediction made for a given triplet, which has been produced <img src="https://render.githubusercontent.com/render/math?math=\Delta H_k"/> hours before the target datetime. 
+<img src="https://render.githubusercontent.com/render/math?math=\alpha"/> is a memory coefficient lying in <img src="https://render.githubusercontent.com/render/math?math=[0,1]"/>, which make the value weight <img src="https://render.githubusercontent.com/render/math?math=\alpha^{\Delta H_k}"/> decaying as the delay <img src="https://render.githubusercontent.com/render/math?math=\Delta H_k"/> increases. We take a value of 0.9 to start with this hyperparameter.
+
+## Make a train set of sequences based on a "best weather prediction" matrix.
 
 <p align="center"><img src="/schemes/sequence_structure.jpg" width="600"/></p>
 
-* Make a model
-* Train it with the sequences
-* Cross-validation
-* Try several models
+## Make a model
+## Train it with the sequences
+## Cross-validation
+## Try several models
