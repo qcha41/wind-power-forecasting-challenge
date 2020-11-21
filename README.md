@@ -1,4 +1,4 @@
-# Data Challenge: Wind Power forecasting for the day-ahead energy market
+# ENS Data Challenge: Wind Power forecasting for the day-ahead energy market
 by Compagnie Nationale du Rhône
 
 # Problem
