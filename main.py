@@ -42,10 +42,9 @@ def get_best_weather_forecast_matrix(X_train) :
 
     return X_train
 
-
-X_train = pd.read_csv('data/X_train_v2.csv',index_col=0).iloc[1:10]
+X_train = pd.read_csv('data/X_train_v2.csv',index_col=0)
 X_train = get_best_weather_forecast_matrix(X_train)
-pickle.dump(X_train, open( "data/X_train_processed.p", "wb" ))
+pickle.dump(X_train, open( "data/X_train_processed.p", "wb"))
 
 #print(get_weather_forecast_matrix(X[1].sample().squeeze()))
 #data_list[sub_data.Time].name = sub_data.Time
