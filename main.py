@@ -1,60 +1,34 @@
-import pandas as pd
-import datetime as dt
 import pickle
-#import tensorflow as tf
+import pandas as pd
 
+# Hyper-parameters
 forecast_memory = 0.9
 
-def get_best_weather_forecast_matrix(X_train) :
+def get_last_forecasts(X) :
+    X = X.copy()
+    X = X.sort_values(by=['update_delay'])
+    X = X.drop_duplicates(subset=['ID', 'WF', 'forecasting_time', 'predictor'],keep='first')
+    X = X.set_index(['ID', 'WF', 'forecasting_time', 'predictor'])
+    X = X.update_value
+    X = X.unstack(level=-1)
+    return X
 
-    def get_run_delay_hours(run_name, target_datetime):
-        day_offset_str = run_name.split('_')[2].strip('D')
-        day_offset = int(day_offset_str) if day_offset_str != '' else 0
-        run_date = (target_datetime + dt.timedelta(days=day_offset)).date()
-        run_time = dt.time(hour=int(run_name.split('_')[1].strip('h')))
-        run_datetime = dt.datetime.combine(run_date, run_time)
-        run_delay_hours = (target_datetime - run_datetime).total_seconds() / 3600
-        return run_delay_hours
+def get_best_forecasts(X) :
+    X = X.copy()
+    X.loc[:, 'memory_weight'] = forecast_memory**X.update_delay
+    X.loc[:, 'update_value_weighted'] = X.memory_weight*X.update_value
+    gb = X.groupby(['ID','WF','forecasting_time','predictor'])
+    X = gb.update_value_weighted.sum()/gb.memory_weight.sum()
+    X = X.unstack(level=-1)
+    return X
 
-    def process_multiple_weather_forecasts(s):
-        target_datetime = s.name[1]
-        s.dropna(inplace=True)
+# Load data
+X_train = pickle.load(open("data/X_train_reshaped.p", "rb"))
+X_test = pickle.load(open("data/X_test_reshaped.p", "rb"))
+Y_train = pd.read_csv("data/Y_train_sl9m6Jh.csv")
 
-        forecasts = pd.DataFrame()
-        for run_name in s.index:
-            delay_hours = get_run_delay_hours(run_name, target_datetime)
-            if delay_hours > 0:
-                forecasts = forecasts.append({'name': '_'.join(run_name.split('_')[::3]),
-                                              'delay_hours': delay_hours,
-                                              'value': s[run_name]}, ignore_index=True)
-        forecasts.sort_values(by='name', inplace=True)
-        forecasts['weight'] = forecast_memory ** forecasts.delay_hours
-        forecasts['weighted_value'] = forecasts.value * forecasts.weight
-        g_forecasts = forecasts.groupby(['name'])
-        return g_forecasts.weighted_value.sum() / g_forecasts.weight.sum()
-        # return g_forecasts.value.mean()
+# Process data
+X_train = get_last_forecasts(X_train)
 
-    X_train = X_train.copy()
-    X_train['WF'] = X_train.WF.apply(lambda x : int(x.strip('WF')))
-    X_train['Time'] = pd.to_datetime(X_train['Time'], format='%d/%m/%Y %H:%M')
-    X_train.set_index(['WF', 'Time'],inplace=True)
-    X_train = X_train.apply(process_multiple_weather_forecasts,axis=1)
 
-    return X_train
 
-X_train = pd.read_csv('data/X_train_v2.csv',index_col=0)
-X_train = get_best_weather_forecast_matrix(X_train)
-pickle.dump(X_train, open( "data/X_train_processed.p", "wb"))
-
-#print(get_weather_forecast_matrix(X[1].sample().squeeze()))
-#data_list[sub_data.Time].name = sub_data.Time
-#df = pd.DataFrame(X[1].iloc[0])
-#df.columns = ['Value']
-#df.name = df.loc['Time','Value']
-
-# Split data per WF
-#X = {}
-#for wf_id in range(1,7) :
-#    X[wf_id] = X_train[X_train.WF==f'WF{wf_id}']
-#    X[wf_id].drop(columns=['WF'],inplace=True)
-#    print(X[wf_id].head())
