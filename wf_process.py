@@ -81,12 +81,12 @@ def train_predict(data) :
 
     # Hyper-parameters declaration
     forecast_memory = 0.9  # In ]0,1] (0 excluded be it keep only forecasts made a the same time as the forecasting time)
-    window_size =  48 # In hours
+    window_size = 72 # In hours
     shuffle_buffer = 10000
     batch_size = 1000
     split_train = 0.85
-    coeff_production = 0.1
-    epochs = 3
+    production_scale = 10 # MW
+    epochs = 40
 
     data = data.copy()
 
@@ -94,7 +94,6 @@ def train_predict(data) :
     time = data.pop('Time')
     production = data.pop('Production').to_frame().rename(columns={'Production':'true'})
     forecasts = data
-
 
     # Feature engineering
     forecasts = get_best_forecasts(time, forecasts, forecast_memory) # Compute best forecasts
@@ -114,9 +113,9 @@ def train_predict(data) :
     forecasts_valid = forecasts.iloc[nb_train_examples - (window_size - 1):train_length]
     forecasts_test = forecasts.iloc[train_length - (window_size - 1):]
     dataset_train = windowed_dataset(forecasts_train, window_size, batch_size, shuffle_buffer,
-                                     production=production[production.dataset == 'train'].true)
+                                     production=production[production.dataset == 'train'].true / production_scale)
     dataset_valid = windowed_dataset(forecasts_valid, window_size, batch_size, shuffle_buffer,
-                                     production=production[production.dataset == 'valid'].true)
+                                     production=production[production.dataset == 'valid'].true / production_scale)
     dataset_test = windowed_dataset(forecasts_test, window_size, batch_size, shuffle_buffer)
 
     # Define NN model
@@ -131,7 +130,10 @@ def train_predict(data) :
     history = model.fit(dataset_train,validation_data=dataset_valid,epochs=epochs)
 
     # Predictions
-    production.loc[production.dataset=='train', 'predict'] = model.predict(dataset_train).squeeze() / coeff_production
-    production.loc[production.dataset=='valid', 'predict'] = model.predict(dataset_valid).squeeze() / coeff_production
-    production.loc[production.dataset=='test', 'predict'] = model.predict(dataset_test).squeeze() / coeff_production
-    return production, pd.DataFrame(history.history)
+    production.loc[production.dataset=='train', 'predict'] = model.predict(dataset_train).squeeze() * production_scale
+    production.loc[production.dataset=='valid', 'predict'] = model.predict(dataset_valid).squeeze() * production_scale
+    production.loc[production.dataset=='test', 'predict'] = model.predict(dataset_test).squeeze() * production_scale
+    production.loc[:,'time'] = time
+
+    output = {'production': production, 'history': pd.DataFrame(history.history), 'model': model}
+    return output

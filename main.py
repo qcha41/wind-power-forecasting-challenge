@@ -43,18 +43,12 @@ if __name__=='__main__' :
         data_wf = restrict_data(data, WF_num)
 
         # Train and predict model
-        wf_production, history = wf_process.train_predict(data_wf)
-        run_manager.add_predictions(wf_production)
+        output = wf_process.train_predict(data_wf)
+        run_manager.add_predictions(WF_num, output)
 
-        # Plot learning curve
-        fig = plt.figure()
-        ax = sns.lineplot(data=history)
-        ax.set(xlabel='epoch',ylabel='loss')
-        run_manager.save_plot(fig, f'learning_curve_wf{WF_num}')
-
-        # Plot final predictions
-        fig = plt.figure()
-        ax = sns.lineplot(data=wf_production[wf_production.dataset=='train'].drop(columns='dataset'))
+        # Plots
+        run_manager.plot_learning_curves()
+        run_manager.plot_predictions()
         break
 
     # Merge all predictions in a file
