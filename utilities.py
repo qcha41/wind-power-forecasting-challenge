@@ -8,7 +8,7 @@ import datetime as dt
 import tensorflow as tf
 import CAPE_CNR_metric
 import numpy as np
-
+import model
 
 class RunManager:
     main_folder_path = os.path.realpath('./runs')
@@ -63,7 +63,7 @@ class ModelTrainer:
         self.folder_path = os.path.join(self.manager.folder_path, f'model_{WF_num}')
         os.mkdir(self.folder_path)
 
-        self.window_size = 10*24  # In hours
+        self.window_size = 96  # In hours
         self.shuffle_buffer = 10000
         self.batch_size = 1000
         self.split_train = 0.85
@@ -158,33 +158,16 @@ class ModelRNN(ModelTrainer):
 
     def prepare_datasets(self):
         # Making sequences datasets
-        self.datasets_train['train'] = windowed_dataset(self.X['train'],
-                                                        self.window_size, self.batch_size, self.shuffle_buffer,
-                                                        production=self.Y['train'])
-        self.datasets_train['valid'] = windowed_dataset(self.X['valid'],
-                                                        self.window_size, self.batch_size, self.shuffle_buffer,
-                                                        production=self.Y['valid'])
-        self.datasets_predict['train'] = windowed_dataset(self.X['train'],
-                                                          self.window_size, self.batch_size, self.shuffle_buffer)
-        self.datasets_predict['valid'] = windowed_dataset(self.X['valid'],
-                                                          self.window_size, self.batch_size, self.shuffle_buffer)
-        self.datasets_predict['test'] = windowed_dataset(self.X['test'],
-                                                         self.window_size, self.batch_size, self.shuffle_buffer)
+        self.datasets_train['train'] = self.windowed_dataset(self.X['train'], production=self.Y['train'])
+        self.datasets_train['valid'] = self.windowed_dataset(self.X['valid'], production=self.Y['valid'])
+        self.datasets_predict['train'] = self.windowed_dataset(self.X['train'])
+        self.datasets_predict['valid'] = self.windowed_dataset(self.X['valid'])
+        self.datasets_predict['test'] = self.windowed_dataset(self.X['test'])
 
     def define_model(self):
-        # Define NN model
-        self.model = tf.keras.Sequential([
-            tf.keras.layers.InputLayer(input_shape=[self.window_size, self.X['train'].shape[1]]),
-            tf.keras.layers.LSTM(120, return_sequences=True),
-            tf.keras.layers.Dropout(0.5),
-            tf.keras.layers.LSTM(40),
-            tf.keras.layers.Dropout(0.5),
-            tf.keras.layers.Dense(1, activation='relu'),
-        ])
 
-        # Compile and run model
-        self.model.compile(loss='mse',
-                           optimizer=tf.keras.optimizers.Adam())
+        # Define NN model - Content publicly hidden for obvious competitive reasons
+        self.model = model.get_compiled_model([self.window_size, self.X['train'].shape[1]])
 
     def process(self, **kwargs):
 
@@ -234,20 +217,21 @@ class ModelRNN(ModelTrainer):
         plt.close(fig)
 
 
-def windowed_dataset(forecasts, window_size, batch_size, shuffle_buffer, production=None):
-    # Forecasts
-    dataset = tf.data.Dataset.from_tensor_slices(forecasts)
-    dataset = dataset.window(window_size, shift=1, drop_remainder=True)  # Make training windows of fixed size
-    dataset = dataset.flat_map(lambda w: w.batch(window_size, drop_remainder=True))  # Transform windows in batches
+    def windowed_dataset(self, forecasts, production=None):
 
-    # Production
-    if production is not None:
-        production_dataset = tf.data.Dataset.from_tensor_slices(production)
-        dataset = tf.data.Dataset.zip((dataset, production_dataset))  # Merge forecasts and production
-        dataset = dataset.shuffle(shuffle_buffer)  # Shuffle the individual batches
+        # Forecasts
+        dataset = tf.data.Dataset.from_tensor_slices(forecasts)
+        dataset = dataset.window(self.window_size, shift=1, drop_remainder=True)  # Make training windows of fixed size
+        dataset = dataset.flat_map(lambda w: w.batch(self.window_size, drop_remainder=True))  # Transform windows in batches
 
-    # Batch and prefetch
-    dataset = dataset.batch(batch_size)  # Make mini-batches of <batch_size> individual batches
-    dataset = dataset.prefetch(1)  # Always preload 1 mini-batch in advance to be ready to consume data
+        # Production
+        if production is not None:
+            production_dataset = tf.data.Dataset.from_tensor_slices(production)
+            dataset = tf.data.Dataset.zip((dataset, production_dataset))  # Merge forecasts and production
+            dataset = dataset.shuffle(self.shuffle_buffer)  # Shuffle the individual batches
 
-    return dataset
+        # Batch and prefetch
+        dataset = dataset.batch(self.batch_size)  # Make mini-batches of <batch_size> individual batches
+        dataset = dataset.prefetch(1)  # Always preload 1 mini-batch in advance to be ready to consume data
+
+        return dataset
