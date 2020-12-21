@@ -11,9 +11,15 @@ import numpy as np
 import model
 
 class RunManager:
+
+    """ Class used to manage the training of the 6 Deep Learning models """
+
     main_folder_path = os.path.realpath('./runs')
 
     def __init__(self, name):
+
+        """ General initialization of the RunManager instance """
+
         self.name = name
         self.time = dt.datetime.now()
         self.folder_name = self.time.strftime('%Y%m%d_%H%M%S') + '_' + self.name.strip(' ')
@@ -40,21 +46,36 @@ class RunManager:
 
 
     def process_wf(self, WF_num, **kwargs):
+
+        """ Start the training and analysis for one particular wind farm """
+
         self.models[WF_num].process(**kwargs)
 
+
     def process_all_wf(self):
+
+        """ Start the training and analysis for all wind farms, and output final predictions for submission """
+
         for WF_num in self.models.keys():
             self.process_wf(WF_num)
         self.output_predictions()
 
+
     def output_predictions(self):
+
+        """ Export the final prediction of the trained models in a csv file for submission """
+
         predictions = pd.concat([self.models[i].Y_predict['test'] for i in self.data.WF.unique()])
         predictions.to_csv(os.path.join(self.folder_path, 'Y_test.csv'), float_format='%.2f')
 
 
 class ModelTrainer:
 
+    """ General parent class for trainer classes """
+
     def __init__(self, manager, WF_num):
+
+        """ General initialization """
 
         self.manager = manager
         self.WF_num = WF_num
@@ -77,6 +98,8 @@ class ModelTrainer:
 
     def prepare_data(self):
 
+        """ Split data in train / valid / test sets """
+
         NWP_names = [col for col in self.data.columns if col.startswith('NWP')]
 
         global_train_length = len(self.data.Production.dropna())
@@ -88,13 +111,21 @@ class ModelTrainer:
         self.X['test'] = self.data.iloc[global_train_length - (self.window_size - 1):][NWP_names]
         self.Y['test'] = self.data.iloc[global_train_length:]['Production']
 
+
     def calculate_scores(self):
+
+        """ Calculate scores of predictions on train and valid datasets """
+
         for key in ['train', 'valid']:
             score = {'mse': np.mean(np.square(self.Y[key] - self.Y_predict[key])),
                      'cape': CAPE_CNR_metric.CAPE_CNR_function(self.Y[key], self.Y_predict[key])}
             self.scores[key] = score
 
+
     def plot_predictions(self):
+
+        """ Plot the predictions of trained model on train, valid and test datasets """
+
         fig = plt.figure()
         for key in ['train', 'valid', 'test']:
             fig.clf()
@@ -114,29 +145,50 @@ class ModelTrainer:
             self.save_plot(fig, f'prediction_{key}_x10')
         plt.close(fig)
 
+
     def save_plot(self, fig, title):
+
+        """ General method to save a plot in the run folder """
+
         fig.suptitle(title)
         fig.savefig(os.path.join(self.folder_path, f'{title}.jpg'))
 
 
 class ModelPersistent(ModelTrainer):
 
+    """ Model trainer class using simple persistent method for benchmark """
+
     def __init__(self, manager, WF_num):
+
+        """ General initialization """
+
         ModelTrainer.__init__(self, manager, WF_num)
 
+
     def process(self, **kwargs):
+
+        """ Train, predict, calculate score of predictions and show them in a plot """
         self.predict()
         self.calculate_scores()
         self.plot_predictions()
 
+
     def predict(self):
+
+        """ Predict values with the trained model on the train and valid datasets """
+
         for key in ['train', 'valid']:
             self.Y_predict[key] = self.Y[key].copy()
             self.Y_predict[key].loc[:] = self.data.loc[self.Y[key].index.values - 1, 'Production'].values
         self.Y_predict['test'] = self.Y['test'].copy()
         self.Y_predict['test'].loc[:] = self.Y['test'].values
 
+
+
+
 class ModelRNN(ModelTrainer):
+
+    """ Model trainer class using deep recurrent neural network (RNN) """
 
     def __init__(self, manager, WF_num):
         ModelTrainer.__init__(self, manager, WF_num)
@@ -150,26 +202,38 @@ class ModelRNN(ModelTrainer):
 
         self.initialize()
 
+
     def initialize(self):
+
+        """ Prepare data, datasets and the model """
 
         self.prepare_data()
         self.prepare_datasets()
         self.define_model()
 
+
     def prepare_datasets(self):
-        # Making sequences datasets
+
+        """ Makes sequences datasets from data to feed the RNN """
+
         self.datasets_train['train'] = self.windowed_dataset(self.X['train'], production=self.Y['train'])
         self.datasets_train['valid'] = self.windowed_dataset(self.X['valid'], production=self.Y['valid'])
         self.datasets_predict['train'] = self.windowed_dataset(self.X['train'])
         self.datasets_predict['valid'] = self.windowed_dataset(self.X['valid'])
         self.datasets_predict['test'] = self.windowed_dataset(self.X['test'])
 
+
     def define_model(self):
+
+        """ Define the RNN model that will be trained on data """
 
         # Define NN model - Content publicly hidden for obvious competitive reasons
         self.model = model.get_compiled_model([self.window_size, self.X['train'].shape[1]])
 
+
     def process(self, **kwargs):
+
+        """ Train, predict, calculate score of predictions and show training informations in figures """
 
         self.train(**kwargs)
         self.predict()
@@ -177,7 +241,11 @@ class ModelRNN(ModelTrainer):
         self.plot_learning_curves()
         self.plot_predictions()
 
+
     def train(self, epochs=None):
+
+        """ Train the RNN model with the sequences datasets """
+
         if epochs is None: epochs = self.epochs
 
         best_model_weights_filepath = os.path.join(self.folder_path,'best_weights')
@@ -188,19 +256,26 @@ class ModelRNN(ModelTrainer):
                                                                        save_best_only=True)
         early_stopping_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001,patience=30)
 
-        # Training
         history = self.model.fit(self.datasets_train['train'], validation_data=self.datasets_train['valid'],
                                  epochs=epochs ,verbose=1,
                                  callbacks=[early_stopping_callback,model_checkpoint_callback])
+
         self.history.append(history)
         self.model.load_weights(best_model_weights_filepath)
 
+
     def predict(self):
+
+        """ Predict values with the trained model on all datasets """
         for key in self.datasets_predict.keys():
             self.Y_predict[key] = self.Y[key].copy()
             self.Y_predict[key].loc[:] = self.model.predict(self.datasets_predict[key]).squeeze()
 
+
     def plot_learning_curves(self):
+
+        """ Plot full learning curves """
+
         fig = plt.figure()
         ax = fig.add_subplot(111)
         i = 0
@@ -218,6 +293,8 @@ class ModelRNN(ModelTrainer):
 
 
     def windowed_dataset(self, forecasts, production=None):
+
+        """ Transform data in sequences dataset """
 
         # Forecasts
         dataset = tf.data.Dataset.from_tensor_slices(forecasts)
