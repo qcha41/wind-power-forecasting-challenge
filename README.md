@@ -56,11 +56,10 @@ To do that, I have implemented a weighted mean of the prediction values. We then
 where <img src="https://render.githubusercontent.com/render/math?math=V_k"/> is the k-th prediction made for a given triplet, which has been produced <img src="https://render.githubusercontent.com/render/math?math=\Delta H_k"/> hours before the target datetime. 
 <img src="https://render.githubusercontent.com/render/math?math=\alpha"/> is a memory coefficient lying in <img src="https://render.githubusercontent.com/render/math?math=[0,1]"/>, which make the value weight <img src="https://render.githubusercontent.com/render/math?math=\alpha^{\Delta H_k}"/> decaying as the delay <img src="https://render.githubusercontent.com/render/math?math=\Delta H_k"/> increases. We take a value of 0.9 to start with this hyperparameter.
 
-## Make a train set of sequences based on a "best weather prediction" matrix.
-
-<p align="center"><img src="/schemes/sequence_structure.jpg" width="600"/></p>
-
 ## Make a model
+
+A RNN model is used.
+
 ## Train it with the sequences
 ## Cross-validation
 ## Try several models
