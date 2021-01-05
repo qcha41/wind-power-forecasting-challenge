@@ -230,6 +230,10 @@ class ModelRNN(ModelTrainer):
         # Define NN model - Content publicly hidden for obvious competitive reasons
         self.model = model.get_compiled_model([self.window_size, self.X['train'].shape[1]])
 
+        # Compile model
+        self.model.compile(loss='mse',
+                           optimizer=tf.keras.optimizers.Adam())
+
 
     def process(self, **kwargs):
 
