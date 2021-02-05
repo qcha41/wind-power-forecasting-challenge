@@ -1,318 +1,219 @@
-import os
-import shutil
 import pandas as pd
-import matplotlib.pyplot as plt
-
-plt.ioff()
 import datetime as dt
-import tensorflow as tf
-import CAPE_CNR_metric
 import numpy as np
-import model
+import tensorflow as tf
+import seaborn as sns
+import matplotlib.pyplot as plt, mpld3
+import mlflow
+import tempfile
+import os
+
+# sns.set(rc={'figure.figsize': (11.7, 8.27)})
+temp_folder = tempfile.mkdtemp()
+shuffle_buffer = 10000
+
+
+def load_data():
+    # Load raw data from file
+    X_train = pd.read_csv(f'data/X_train_v2.csv', index_col=0)
+    X_test = pd.read_csv(f'data/X_test_v2.csv', index_col=0)
+    Y_train = pd.read_csv("data/Y_train_sl9m6Jh.csv", index_col=0)
+
+    # Make global dataframe with it
+    df = pd.concat([X_train, X_test])
+    df.loc[:, 'Time'] = pd.to_datetime(df['Time'], format='%d/%m/%Y %H:%M')
+    df.loc[:, 'WF'] = df.WF.apply(lambda x: int(x.strip('WF')))
+    df.loc[Y_train.index, 'Production'] = Y_train
+
+    return df
+
+
+def calculate_best_forecasts(df, forecast_memory):
+    def get_run_infos(run_name):
+        predictor = '_'.join(run_name.split('_')[::3])
+        run_day_offset_str = run_name.split('_')[2].strip('D')
+        run_day_offset = int(run_day_offset_str) if run_day_offset_str != '' else 0
+        run_time = int(run_name.split('_')[1].strip('h'))
+        timedelta = dt.timedelta(days=run_day_offset, hours=run_time)
+        return predictor, timedelta
+
+    def reshape_run_data(run_data):
+        # Preparation
+        run_name = [col for col in run_data.columns if col.startswith('NWP')][0]
+
+        # Computing predictor and delay
+        predictor, timedelta = get_run_infos(run_name)
+        run_data.loc[:, 'predictor'] = predictor
+        update_time = run_data.Time.dt.normalize() + timedelta
+        run_data.loc[:, 'delay'] = (run_data.Time - update_time) / pd.Timedelta('1h')
+
+        # Cleaning
+        run_data.rename(columns={run_name: 'value'}, inplace=True)
+        run_data.drop(columns='Time', inplace=True)
+        run_data.dropna(subset=['value'], inplace=True)
+        run_data.reset_index(inplace=True)
+
+        return run_data
+
+    # Reshape and concatenate each NWP_run data ( index=[ID,predictor]] , columns=[delay,value] )
+    best_forecasts = pd.concat([reshape_run_data(df.loc[:, ['Time', col]])
+                                for col in df.columns if col.startswith('NWP')], ignore_index=True)
+
+    # Computing weight and weighted_value
+    best_forecasts.loc[:, 'weight'] = forecast_memory ** best_forecasts.delay
+    best_forecasts.loc[:, 'weighted_value'] = best_forecasts.weight * best_forecasts.value
+
+    # Computing best forecasts
+    gb = best_forecasts.groupby(['ID', 'predictor'])
+    best_forecasts = gb.weighted_value.sum() / gb.weight.sum()
+    best_forecasts = best_forecasts.unstack(level=-1)
+
+    # Replace initial NWP runs forecasts by the best computed forecasts
+    not_NWP_cols = [col for col in df.columns if not col.startswith('NWP')]
+    df = pd.concat([df[not_NWP_cols], best_forecasts], axis=1)
+
+    return df
+
+
+def get_NWP_cols(df):
+    return [col for col in df.columns if col.startswith('NWP')]
+
+
+def interpolate_nans(df):
+    # Interpolate missing values within each Wind farms
+    NWP_cols = get_NWP_cols(df)
+    gb = df.groupby('WF')[NWP_cols]
+    df.loc[:, NWP_cols] = gb.apply(lambda group: group.interpolate(method='linear', limit_direction='both'))
+    return df
+
+
+def augment_data(df):
+    # Append wind speed and direction
+    NWP_cols = get_NWP_cols(df)
+    for NWP_num in set([col.split('_')[0] for col in NWP_cols]):
+        df.loc[:, NWP_num + '_WS'] = np.sqrt(df[NWP_num + '_U'] ** 2 + df[NWP_num + '_V'] ** 2)  # Wind speed
+        df.loc[:, NWP_num + '_WD'] = np.arctan2(df[NWP_num + '_U'], df[NWP_num + '_V'])  # Wind direction (angle)
 
-class RunManager:
+    # Append features mean across prediction sources
+    NWP_cols = get_NWP_cols(df)
+    for NWP_var in set([col.split('_')[1] for col in NWP_cols]):
+        predictors = [col for col in NWP_cols if col.split('_')[1] == NWP_var]
+        if len(predictors) > 1:
+            df.loc[:, 'NWP0_' + NWP_var] = df[predictors].mean(axis=1)
 
-    """ Class used to manage the training of the 6 Deep Learning models """
+    return df
 
-    main_folder_path = os.path.realpath('./runs')
 
-    def __init__(self, name):
-
-        """ General initialization of the RunManager instance """
-
-        self.name = name
-        self.time = dt.datetime.now()
-        self.folder_name = self.time.strftime('%Y%m%d_%H%M%S') + '_' + self.name.strip(' ')
-        self.folder_path = os.path.join(self.main_folder_path, self.folder_name)
-
-        # Initialize folder
-        if not os.path.exists(self.main_folder_path): os.mkdir(self.main_folder_path)
-        os.mkdir(self.folder_path)
-
-        # Backup files
-        backup_folder_path = os.path.join(self.folder_path, 'backup')
-        os.mkdir(backup_folder_path)
-        for file_path in [os.path.join('.', f) for f in os.listdir('.') if f.endswith('.py')]:
-            shutil.copy(file_path, backup_folder_path)
-
-        # For upcoming results
-        self.data = pd.read_csv('data/data_processed.csv', index_col=0)
-        self.data.loc[:, 'Time'] = pd.to_datetime(self.data['Time'])
-
-        # Training models (one for each WF)
-        self.models = {}
-        for WF_num in self.data.WF.unique() :
-            self.models[WF_num] = ModelRNN(self, WF_num)
-
-
-    def process_wf(self, WF_num, **kwargs):
-
-        """ Start the training and analysis for one particular wind farm """
-
-        self.models[WF_num].process(**kwargs)
-
-
-    def process_all_wf(self):
-
-        """ Start the training and analysis for all wind farms, and output final predictions for submission """
-
-        for WF_num in self.models.keys():
-            self.process_wf(WF_num)
-        self.output_predictions()
-
-
-    def output_predictions(self):
-
-        """ Export the final prediction of the trained models in a csv file for submission """
-
-        predictions = pd.concat([self.models[i].Y_predict['test'] for i in self.data.WF.unique()])
-        predictions.to_csv(os.path.join(self.folder_path, 'Y_test.csv'), float_format='%.2f')
-
-
-class ModelTrainer:
-
-    """ General parent class for trainer classes """
-
-    def __init__(self, manager, WF_num):
-
-        """ General initialization """
-
-        self.manager = manager
-        self.WF_num = WF_num
-        self.data = self.manager.data.loc[self.manager.data.WF == self.WF_num].drop(columns='WF')
-
-        self.folder_path = os.path.join(self.manager.folder_path, f'model_{WF_num}')
-        os.mkdir(self.folder_path)
-
-        self.window_size = 96  # In hours
-        self.shuffle_buffer = 10000
-        self.batch_size = 1000
-        self.split_train = 0.85
-
-        self.X = {}
-        self.Y = {}
-        self.Y_predict = {}
-
-        self.scores = {}
-        self.history = []
-
-    def prepare_data(self):
-
-        """ Split data in train / valid / test sets """
-
-        NWP_names = [col for col in self.data.columns if col.startswith('NWP')]
-
-        global_train_length = len(self.data.Production.dropna())
-        nb_train_examples = int((global_train_length - self.window_size) * self.split_train)
-        self.X['train'] = self.data.iloc[:nb_train_examples][NWP_names]
-        self.Y['train'] = self.data.iloc[self.window_size - 1:nb_train_examples]['Production']
-        self.X['valid'] = self.data.iloc[nb_train_examples - (self.window_size - 1):global_train_length][NWP_names]
-        self.Y['valid'] = self.data.iloc[nb_train_examples:global_train_length]['Production']
-        self.X['test'] = self.data.iloc[global_train_length - (self.window_size - 1):][NWP_names]
-        self.Y['test'] = self.data.iloc[global_train_length:]['Production']
-
-
-    def calculate_scores(self):
-
-        """ Calculate scores of predictions on train and valid datasets """
-
-        for key in ['train', 'valid']:
-            score = {'mse': np.mean(np.square(self.Y[key] - self.Y_predict[key])),
-                     'cape': CAPE_CNR_metric.CAPE_CNR_function(self.Y[key], self.Y_predict[key])}
-            self.scores[key] = score
-
-
-    def plot_predictions(self):
-
-        """ Plot the predictions of trained model on train, valid and test datasets """
-
-        fig = plt.figure()
-        for key in ['train', 'valid', 'test']:
-            fig.clf()
-            ax = fig.add_subplot()
-            time = self.data.Time.loc[self.Y[key].index]
-            ax.plot(time, self.Y[key], label='true')
-            if key in ['train','valid']:
-                predict_label = f'predict\nMSE={self.scores[key]["mse"]:g}\nCAPE={self.scores[key]["cape"]:g}'
-            else:
-                predict_label = 'predict'
-            ax.plot(time, self.Y_predict[key], '--', label=predict_label)
-            ax.legend()
-            self.save_plot(fig, f'prediction_{key}')
-            current_xlim = ax.get_xlim()
-            ax.set_xlim((current_xlim[1] + current_xlim[0])/2,
-                        (current_xlim[1] + current_xlim[0])/2 + (current_xlim[1] - current_xlim[0]) * 0.1)
-            self.save_plot(fig, f'prediction_{key}_x10')
-        plt.close(fig)
-
-
-    def save_plot(self, fig, title):
-
-        """ General method to save a plot in the run folder """
-
-        fig.suptitle(title)
-        fig.savefig(os.path.join(self.folder_path, f'{title}.jpg'))
-
-
-class ModelPersistent(ModelTrainer):
-
-    """ Model trainer class using simple persistent method for benchmark """
-
-    def __init__(self, manager, WF_num):
-
-        """ General initialization """
-
-        ModelTrainer.__init__(self, manager, WF_num)
-
-
-    def process(self, **kwargs):
-
-        """ Train, predict, calculate score of predictions and show them in a plot """
-        self.predict()
-        self.calculate_scores()
-        self.plot_predictions()
-
-
-    def predict(self):
-
-        """ Predict values with the trained model on the train and valid datasets """
-
-        for key in ['train', 'valid']:
-            self.Y_predict[key] = self.Y[key].copy()
-            self.Y_predict[key].loc[:] = self.data.loc[self.Y[key].index.values - 1, 'Production'].values
-        self.Y_predict['test'] = self.Y['test'].copy()
-        self.Y_predict['test'].loc[:] = self.Y['test'].values
-
-
-
-
-class ModelRNN(ModelTrainer):
-
-    """ Model trainer class using deep recurrent neural network (RNN) """
-
-    def __init__(self, manager, WF_num):
-        ModelTrainer.__init__(self, manager, WF_num)
-
-        self.epochs = 500
-
-        self.datasets_train = {}
-        self.datasets_predict = {}
-
-        self.model = None
-
-        self.initialize()
-
-
-    def initialize(self):
-
-        """ Prepare data, datasets and the model """
-
-        self.prepare_data()
-        self.prepare_datasets()
-        self.define_model()
-
-
-    def prepare_datasets(self):
-
-        """ Makes sequences datasets from data to feed the RNN """
-
-        self.datasets_train['train'] = self.windowed_dataset(self.X['train'], production=self.Y['train'])
-        self.datasets_train['valid'] = self.windowed_dataset(self.X['valid'], production=self.Y['valid'])
-        self.datasets_predict['train'] = self.windowed_dataset(self.X['train'])
-        self.datasets_predict['valid'] = self.windowed_dataset(self.X['valid'])
-        self.datasets_predict['test'] = self.windowed_dataset(self.X['test'])
-
-
-    def define_model(self):
-
-        """ Define the RNN model that will be trained on data """
-
-        # Define NN model - Content publicly hidden for obvious competitive reasons
-        self.model = model.get_compiled_model([self.window_size, self.X['train'].shape[1]])
-
-        # Compile model
-        self.model.compile(loss='mse',
-                           optimizer=tf.keras.optimizers.Adam())
-
-
-    def process(self, **kwargs):
-
-        """ Train, predict, calculate score of predictions and show training informations in figures """
-
-        self.train(**kwargs)
-        self.predict()
-        self.calculate_scores()
-        self.plot_learning_curves()
-        self.plot_predictions()
-
-
-    def train(self, epochs=None):
-
-        """ Train the RNN model with the sequences datasets """
-
-        if epochs is None: epochs = self.epochs
-
-        best_model_weights_filepath = os.path.join(self.folder_path,'best_weights')
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=best_model_weights_filepath,
-                                                                       save_weights_only=True,
-                                                                       monitor='val_loss',
-                                                                       mode='min',
-                                                                       save_best_only=True)
-        early_stopping_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001,patience=30)
-
-        history = self.model.fit(self.datasets_train['train'], validation_data=self.datasets_train['valid'],
-                                 epochs=epochs ,verbose=1,
-                                 callbacks=[early_stopping_callback,model_checkpoint_callback])
-
-        self.history.append(history)
-        self.model.load_weights(best_model_weights_filepath)
-
-
-    def predict(self):
-
-        """ Predict values with the trained model on all datasets """
-        for key in self.datasets_predict.keys():
-            self.Y_predict[key] = self.Y[key].copy()
-            self.Y_predict[key].loc[:] = self.model.predict(self.datasets_predict[key]).squeeze()
-
-
-    def plot_learning_curves(self):
-
-        """ Plot full learning curves """
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        i = 0
-        for h in self.history:
-            length = len(h.history['loss'])
-            for key in ['loss', 'val_loss']:
-                ax.plot(range(i, i + length), h.history[key], label=key)
-            i += length
-        ax.legend()
-        ax.set(xlabel='epoch', ylabel='loss')
-        self.save_plot(fig, 'learning_curve')
-        ax.set_yscale('log')
-        self.save_plot(fig, 'learning_curve_log')
-        plt.close(fig)
-
-
-    def windowed_dataset(self, forecasts, production=None):
-
-        """ Transform data in sequences dataset """
-
-        # Forecasts
-        dataset = tf.data.Dataset.from_tensor_slices(forecasts)
-        dataset = dataset.window(self.window_size, shift=1, drop_remainder=True)  # Make training windows of fixed size
-        dataset = dataset.flat_map(lambda w: w.batch(self.window_size, drop_remainder=True))  # Transform windows in batches
-
-        # Production
-        if production is not None:
-            production_dataset = tf.data.Dataset.from_tensor_slices(production)
-            dataset = tf.data.Dataset.zip((dataset, production_dataset))  # Merge forecasts and production
-            dataset = dataset.shuffle(self.shuffle_buffer)  # Shuffle the individual batches
-
-        # Batch and prefetch
-        dataset = dataset.batch(self.batch_size)  # Make mini-batches of <batch_size> individual batches
-        dataset = dataset.prefetch(1)  # Always preload 1 mini-batch in advance to be ready to consume data
-
-        return dataset
+def normalize_data(df):
+    NWP_cols = get_NWP_cols(df)
+    # CLCT variable is a percentage --> divide it by 100
+    NWP_cols_CLCT = [col for col in NWP_cols if 'CLCT' in col]
+    df.loc[:, NWP_cols_CLCT] /= 100
+    # Other variables --> centered and normalized
+    NWP_cols_noCLCT = [col for col in NWP_cols if 'CLCT' not in col]
+    data = df.loc[:, NWP_cols_noCLCT]
+    df.loc[:, NWP_cols_noCLCT] = (data - data.mean()) / data.std()
+    return df
+
+
+def extract_wf_data(df, wf_num):
+    return df.query(f'WF=={wf_num}').drop(columns=['WF'])
+
+
+def extract_period_data(df_wf, i_ini, i_end, window_size):
+    NWP_cols = get_NWP_cols(df_wf)
+    t = df_wf.iloc[i_ini:i_end].Time
+    x = df_wf.iloc[i_ini - (window_size - 1):i_end][NWP_cols]
+    y = df_wf.iloc[i_ini:i_end].Production
+    return t, x, y
+
+
+def get_windowed_dataset(x, y, window_size, batch_size, shuffle=False):
+    dataset = tf.data.Dataset.from_tensor_slices(x)
+    dataset = dataset.window(window_size, shift=1, drop_remainder=True)  # Make training windows of fixed size
+    dataset = dataset.flat_map(lambda w: w.batch(window_size, drop_remainder=True))  # Transform windows in batches
+    if y is not None:
+        y_dataset = tf.data.Dataset.from_tensor_slices(y)
+        dataset = tf.data.Dataset.zip((dataset, y_dataset))  # Merge forecasts and production
+    if shuffle is True:
+        dataset = dataset.shuffle(shuffle_buffer)  # Shuffle the individual batches
+    dataset = dataset.batch(batch_size)  # Make mini-batches of <batch_size> individual batches
+    dataset = dataset.prefetch(1)  # Always preload 1 mini-batch in advance to be ready to consume data
+    return dataset
+
+
+def split_holdout_validation(df_wf, split, window_size):
+    nb_labelled_data = len(df_wf.Production.dropna())
+    i_split = int(nb_labelled_data * split)
+    t_train, x_train, y_train = extract_period_data(df_wf, window_size - 1, i_split, window_size)
+    t_valid, x_valid, y_valid = extract_period_data(df_wf, i_split, nb_labelled_data, window_size)
+    return t_train, x_train, y_train, t_valid, x_valid, y_valid
+
+
+def split_forward_chaining_validation(df_wf, valid_size, nb_valid, window_size):
+    nb_labelled_data = len(df_wf.Production.dropna())
+    sets = []
+    for i in range(nb_valid):
+        i_valid_ini = int((1 - (nb_valid - i) * valid_size) * nb_labelled_data)
+        i_valid_fin = int((1 - (nb_valid - i - 1) * valid_size) * nb_labelled_data)
+        t_train, x_train, y_train = extract_period_data(df_wf, window_size - 1, i_valid_ini, window_size)
+        t_valid, x_valid, y_valid = extract_period_data(df_wf, i_valid_ini, i_valid_fin, window_size)
+        sets.append((t_train, x_train, y_train, t_valid, x_valid, y_valid))
+    return sets
+
+
+def get_train_dataset(df_wf, window_size):
+    nb_labelled_data = len(df_wf.Production.dropna())
+    t, x, y = extract_period_data(df_wf, window_size - 1, nb_labelled_data, window_size)
+    return t, x, y
+
+
+def get_test_dataset(df_wf, window_size):
+    nb_labelled_data = len(df_wf.Production.dropna())
+    t, x, y_fake = extract_period_data(df_wf, nb_labelled_data, None, window_size)
+    return t, x
+
+
+def save_plot(fig, file_name):
+    file_path = os.path.join(temp_folder, file_name + '.html')
+    mpld3.save_html(plt.gcf(), file_path)
+    mlflow.log_artifact(file_path)
+
+
+def plot_learning_curves(history):
+    plt.figure()
+    for key in history.history.keys():
+        sns.lineplot(x=range(len(history.history[key])), y=history.history[key], label=key)
+    save_plot(plt.gcf(), 'learning_curves')
+
+
+def predict(model, dataset, time):
+    return pd.Series(model.predict(dataset).squeeze(), index=time.index)
+
+
+def plot_predictions(time, y_true, y_predict, title):
+    plt.figure(figsize=(15, 6))
+    sns.lineplot(x=time, y=y_predict, label='y_predict')
+    if y_true is not None:
+        sns.lineplot(x=time, y=y_true, label='y_true')
+    plt.title(title)
+    save_plot(plt.gcf(), f'{title}_predictions')
+
+
+def save_predictions(predictions):
+    predictions = pd.concat([p for p in predictions]) \
+        .sort_index() \
+        .rename('Production') \
+        .round(decimals=2)
+    file_path = os.path.join(temp_folder, 'predictions.csv')
+    predictions.to_csv(file_path)
+    mlflow.log_artifact(file_path)
+
+
+def get_mean_std_metrics(metrics):
+    cross_metrics = {}
+    for key in metrics[0].keys():
+        values = [history[key][-1] for history in metrics]
+        cross_metrics[f'{key}'] = np.mean(values)
+        cross_metrics[f'{key}_std'] = np.std(values)
+    return cross_metrics
