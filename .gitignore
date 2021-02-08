@@ -1,7 +1,3 @@
-aws_credentials.csv
-analyse_runs.ipynb
-edit_mlflow.ipynb
-/analyse_runs/
-/.idea/
-/plots/
-plots.py
+local
+.idea
+.ipynb_checkpoints
