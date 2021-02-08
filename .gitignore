@@ -1,7 +1,7 @@
 aws_credentials.csv
 analyse_runs.ipynb
 edit_mlflow.ipynb
-plots.py
 /analyse_runs/
 /.idea/
 /plots/
+plots.py
