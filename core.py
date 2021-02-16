@@ -12,7 +12,6 @@ import os
 temp_folder = tempfile.mkdtemp()
 shuffle_buffer = 10000
 
-
 def load_data():
     # Load raw data from file
     X_train = pd.read_csv(f'data/X_train_v2.csv', index_col=0)
