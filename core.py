@@ -216,3 +216,28 @@ def get_mean_std_metrics(metrics):
         cross_metrics[f'{key}'] = np.mean(values)
         cross_metrics[f'{key}_std'] = np.std(values)
     return cross_metrics
+
+
+def plot_feature_vs_time(df, NWP_var):
+    def separate_feature_info(df, run):
+        NWP_num = int(run.split('_')[0].strip('NWP'))
+        NWP_var = run.split('_')[1]
+        return df[["Time", "WF", run]].assign(NWP=NWP_num) \
+            .rename(columns={run: NWP_var})
+
+    NWP_runs = [col for col in df.columns if col.startswith('NWP') and col.split('_')[1] == NWP_var]
+    df = pd.concat([separate_feature_info(df, run) for run in NWP_runs]) \
+        .sort_values(by='Time')
+    g = sns.FacetGrid(df, col="WF", hue="NWP", col_wrap=3)
+    g.map(sns.lineplot, "Time", NWP_var, alpha=0.7)
+    g.add_legend()
+    rotate_x_labels(g)
+
+def plot_production_vs_time(df):
+    g = sns.FacetGrid(df, col="WF", col_wrap=3)
+    g.map(sns.lineplot, "Time", "Production")
+    rotate_x_labels(g)
+
+def rotate_x_labels(graph):
+    for axes in graph.axes.flat:
+        plt.setp(axes.xaxis.get_majorticklabels(), rotation=60)
