@@ -92,15 +92,16 @@ def augment_data(df):
     for NWP_num in set([col.split('_')[0] for col in NWP_cols]):
         df.loc[:, NWP_num + '_WS'] = np.sqrt(df[NWP_num + '_U'] ** 2 + df[NWP_num + '_V'] ** 2)  # Wind speed
         df.loc[:, NWP_num + '_WD'] = np.arctan2(df[NWP_num + '_U'], df[NWP_num + '_V'])  # Wind direction (angle)
+    return df
 
-    # Append features mean across prediction sources
+def mean_data(df):
+    # Returns a dataframe containing the mean value for each weather variable across the NWP models
     NWP_cols = get_NWP_cols(df)
+    df_mean = df.drop(columns=NWP_cols)
     for NWP_var in set([col.split('_')[1] for col in NWP_cols]):
         predictors = [col for col in NWP_cols if col.split('_')[1] == NWP_var]
-        if len(predictors) > 1:
-            df.loc[:, 'NWP0_' + NWP_var] = df[predictors].mean(axis=1)
-
-    return df
+        df_mean.loc[:, NWP_var] = df[predictors].mean(axis=1)
+    return df_mean
 
 
 def normalize_data(df):
@@ -217,19 +218,27 @@ def get_mean_std_metrics(metrics):
         cross_metrics[f'{key}_std'] = np.std(values)
     return cross_metrics
 
+def separate_feature_info(df, run, with_prod=False):
+    NWP_num = int(run.split('_')[0].strip('NWP'))
+    NWP_var = run.split('_')[1]
+    base_columns = ["Time", "WF", run]
+    if with_prod is True : base_columns.append("Production")
+    return df[base_columns].assign(NWP=NWP_num) \
+                                  .rename(columns={run: NWP_var})
 
 def plot_feature_vs_time(df, NWP_var):
-    def separate_feature_info(df, run):
-        NWP_num = int(run.split('_')[0].strip('NWP'))
-        NWP_var = run.split('_')[1]
-        return df[["Time", "WF", run]].assign(NWP=NWP_num) \
-            .rename(columns={run: NWP_var})
-
     NWP_runs = [col for col in df.columns if col.startswith('NWP') and col.split('_')[1] == NWP_var]
-    df = pd.concat([separate_feature_info(df, run) for run in NWP_runs]) \
-        .sort_values(by='Time')
+    df = pd.concat([separate_feature_info(df, run) for run in NWP_runs]).sort_values(by='Time')
     g = sns.FacetGrid(df, col="WF", hue="NWP", col_wrap=3)
     g.map(sns.lineplot, "Time", NWP_var, alpha=0.7)
+    g.add_legend()
+    rotate_x_labels(g)
+
+def plot_feature_vs_production(df, NWP_var):
+    NWP_runs = [col for col in df.columns if col.startswith('NWP') and col.split('_')[1] == NWP_var]
+    df = pd.concat([separate_feature_info(df, run, with_prod=True) for run in NWP_runs]).sort_values(by='Time')
+    g = sns.FacetGrid(df, col="WF", hue="NWP", col_wrap=3)
+    g.map(sns.scatterplot, NWP_var, "Production", alpha=0.5)
     g.add_legend()
     rotate_x_labels(g)
 
@@ -238,6 +247,22 @@ def plot_production_vs_time(df):
     g.map(sns.lineplot, "Time", "Production")
     rotate_x_labels(g)
 
+def plot_correlation_graph(df):
+
+    def unit_corr_graph(data, color, cbar_ax):
+        corr = data.drop(columns="WF").corr()
+        mask = np.zeros(corr.shape, dtype=bool)
+        mask[np.triu_indices(len(mask))] = True
+        a = sns.heatmap(corr, cmap="coolwarm", mask=mask, vmin=-1, vmax=1, cbar_ax=cbar_ax, annot=True)
+        a.set_ylim(len(corr), 1)
+        a.set_xlim(0, len(corr.columns) - 1)
+
+    g = sns.FacetGrid(df, col="WF", col_wrap=3)
+    cbar_ax = g.fig.add_axes([1.0, .2, .02, .7])
+    g.map_dataframe(unit_corr_graph, cbar_ax=cbar_ax)
+    rotate_x_labels(g)
+
 def rotate_x_labels(graph):
     for axes in graph.axes.flat:
         plt.setp(axes.xaxis.get_majorticklabels(), rotation=60)
+
