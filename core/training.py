@@ -4,27 +4,6 @@ import numpy as np
 import pandas as pd
 
 from .utilities import get_nwp_cols, TEMP_FOLDER
-from . import plots
-
-
-class ModelWrapper:
-    def __init__(self):
-        self.model = None
-        self.history = None
-
-    def train(self, x_train, y_train, x_valid=None, y_valid=None):
-        """ Starts the procedure of training (train + plot learning curves """
-
-        self.run(x_train, y_train, x_valid, y_valid)
-        plots.learning_curves(self.history)
-
-    def predict(self, t, x, y_true, label):
-        """ Use the trained model to predict on provided data x and compare with y_true """
-
-        y_predict = pd.Series(self.model.predict(x).squeeze(), index=t.index, name="Production")
-        loss = np.mean((y_true - y_predict) ** 2)
-        plots.predictions_vs_time(t, y_true, y_predict, label, loss)
-        return y_predict, loss
 
 
 def get_mean_std_metrics(metrics):
@@ -43,6 +22,14 @@ def save_predictions(predictions):
         .sort_index() \
         .rename('Production') \
         .round(decimals=2)
-    file_path = os.path.join(TEMP_FOLDER, 'predictions.csv')
-    predictions.to_csv(file_path)
+    save_data(predictions, 'predictions.csv')
+
+
+def save_data(data, filename):
+    """ Save given dataframe into a csv file and upload it in mlflow"""
+
+    file_path = os.path.join(TEMP_FOLDER, filename)
+    data.to_csv(file_path)
     mlflow.log_artifact(file_path)
+
+

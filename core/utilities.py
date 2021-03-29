@@ -24,4 +24,4 @@ def configure_mlflow_server():
     cred = pd.read_csv(cred_path, index_col=0, squeeze=True)
     os.environ['AWS_ACCESS_KEY_ID'] = cred.AWS_ACCESS_KEY_ID
     os.environ['AWS_SECRET_ACCESS_KEY'] = cred.AWS_SECRET_ACCESS_KEY
-    mlflow.set_tracking_uri(f"http://{cred.AWS_USERNAME}:{cred.AWS_PASSWORD}@{cred.AWS_URL}")
+    mlflow.set_tracking_uri(f"http://{cred.AWS_URL}")

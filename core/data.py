@@ -93,6 +93,26 @@ def append_features(df):
     return df
 
 
+def detect_manual_shutdown(df, std_coeff=1.5):
+    """ Append a flag 'manual_shutdown' to data where power production is 0 whereas
+    wind speed is strong """
+
+    df = df.copy()
+    df['manual_shutdown'] = False
+    ws_cols = [col for col in get_nwp_cols(df) if col.endswith('WS')]
+    for wf_num in df.WF.unique():
+        # For each wind farm, keep only wind speed forecasts, where power production is 0
+        df_wf = df.loc[(df.WF == wf_num) & (df.Production == 0), ws_cols]
+        # Compute wind speed thresholds per wind speed forecast, based on mean and std of these remaining forecasts
+        thresholds = df_wf.mean() + std_coeff*df_wf.std()
+        # If a given wind speed value is above threshold, the data at this time is suspected
+        suspicion_table = (df_wf - thresholds > 0)
+        # If the point is suspected on all forecasts, the WF is declared as manually shutdown for that time
+        declared = (suspicion_table.sum(axis=1) == 4)
+        df.loc[df_wf.loc[declared].index, 'manual_shutdown'] = True
+    return df
+
+
 def mean_data(df):
     """ Returns a dataframe containing the mean value for each weather variable across the NWP models """
 
@@ -107,6 +127,7 @@ def mean_data(df):
 def normalize_data(df):
     """ Normalize features according to their types """
 
+    df = df.copy()
     nwp_cols = get_nwp_cols(df)
 
     # CLCT variable is a percentage --> divide it by 100
@@ -127,7 +148,19 @@ def extract_wf_data(df, wf_num):
     return df.query(f'WF=={wf_num}').drop(columns=['WF'])
 
 
-class Data:
+def set_disabled_flag(df, inactivity_periods, delay_threshold):
+    """ Set the feature 'disabled' to True in the dataset
+    for examples in periods of inactivity
+    longer than delay_threshold """
+    df = df.copy()
+    df.loc[:, 'disabled'] = False
+    for period in [p for p in inactivity_periods if p['hours'] > delay_threshold]:
+        ID = period['ID_ini']
+        df.loc[ID:ID + period['hours'], 'disabled'] = True
+    return df
+
+
+class WFData:
     def __init__(self, df, wf_num, window_size):
         self.wf_num = wf_num
         self.df_wf = df[df.WF == self.wf_num].sort_values(by="Time").reset_index()
@@ -184,8 +217,19 @@ class Data:
     def _get_windowed_data(self, index):
         """ Internal method that transforms data of given index into a windowed dataset """
 
+        index = self._remove_manual_shutdown_index(index)
         t = self.df_wf.loc[index].set_index('ID')["Time"]
         x = self.df_wf[get_nwp_cols(self.df_wf)]
         x = np.array([x.loc[i - self.window_size + 1:i].values for i in index])
         y = self.df_wf.loc[index].set_index('ID')["Production"]
         return t, x, y
+
+    def _remove_manual_shutdown_index(self, index):
+        """ Removes index that correspond to manual shutdown """
+
+        if 'disabled' in self.df_wf.columns :
+            data = self.df_wf.loc[index]
+            not_shutdown_data = data[data.disabled == False]
+            return not_shutdown_data.index.values
+        else :
+            return index
